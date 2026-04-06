@@ -27,32 +27,43 @@ function parseExcelFile(file) {
       try {
         const data = new Uint8Array(e.target.result);
         const wb = XLSX.read(data, { type: "array" });
-        // Find cost sheet
-        const sheetName = wb.SheetNames.find(
-          (n) => n.includes("見積") || n.includes("コスト") || n.includes("cost")
-        ) || wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
-        // Find header row with 工数 and 金額
+        // Try all sheets, prefer ones with cost-related names
+        const priority = wb.SheetNames.slice().sort((a, b) => {
+          const score = (n) => {
+            if (n.includes("コスト") || n.includes("全体工数") || n.includes("見積")) return 3;
+            if (n.includes("工数") || n.includes("cost") || n.includes("Cost")) return 2;
+            return 0;
+          };
+          return score(b) - score(a);
+        });
+
         let headerIdx = -1;
-        let noCol, itemCol, manMonthCol, costCol, amtCol;
-        for (let i = 0; i < rows.length; i++) {
-          const r = rows[i].map((c) => (c ? String(c).trim() : ""));
-          const noI = r.findIndex((c) => c === "No" || c === "NO" || c === "#");
-          const mmI = r.findIndex((c) => c.includes("工数") || c.includes("人月"));
-          const costI = r.findIndex((c) => (c.includes("コスト") || c.includes("単価")) && !c.includes("合計"));
-          const amtI = r.findIndex((c) => c.includes("金額") || c.includes("amount"));
-          const itemI = r.findIndex((c) => c.includes("項目") || c.includes("タスク") || c.includes("item"));
-          if (mmI !== -1 && amtI !== -1) {
-            headerIdx = i;
-            noCol = noI >= 0 ? noI : 0;
-            itemCol = itemI >= 0 ? itemI : noI + 1;
-            manMonthCol = mmI;
-            costCol = costI >= 0 ? costI : mmI + 1;
-            amtCol = amtI;
-            break;
+        let noCol, itemCol, manMonthCol, costCol, amtCol, rows;
+
+        for (const sheetName of priority) {
+          const ws = wb.Sheets[sheetName];
+          rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+          for (let i = 0; i < rows.length; i++) {
+            const r = rows[i].map((c) => (c ? String(c).replace(/\n/g, "").trim() : ""));
+            const noI = r.findIndex((c) => c === "No" || c === "NO" || c === "#");
+            const mmI = r.findIndex((c) => c.includes("工数") || c.includes("人月") || c.includes("MM"));
+            const costI = r.findIndex((c) => (c.includes("コスト") || c.includes("単価")) && !c.includes("合計"));
+            const amtI = r.findIndex((c) => c.includes("金額") || c.includes("コスト") || c.includes("amount"));
+            const itemI = r.findIndex((c) => c.includes("項目") || c.includes("タスク") || c.includes("役割") || c.includes("item") || c.includes("Category"));
+            // Need at least man-month column + item column
+            if (mmI !== -1 && (itemI !== -1 || noI !== -1)) {
+              headerIdx = i;
+              noCol = noI >= 0 ? noI : 0;
+              itemCol = itemI >= 0 ? itemI : noI + 1;
+              manMonthCol = mmI;
+              costCol = costI >= 0 ? costI : mmI + 1;
+              amtCol = amtI >= 0 ? amtI : costI >= 0 ? costI + 1 : mmI + 2;
+              break;
+            }
           }
+          if (headerIdx !== -1) break;
         }
 
         if (headerIdx === -1) {
@@ -66,14 +77,16 @@ function parseExcelFile(file) {
           const no = r[noCol];
           const item = r[itemCol];
           const mm = parseFloat(r[manMonthCol]);
-          const uc = parseFloat(r[costCol]);
+          const ucRaw = parseFloat(r[costCol]);
+          const amtRaw = parseFloat(r[amtCol]);
           if (!item || isNaN(mm) || mm <= 0) continue;
-          if (String(item).includes("合計") || String(item).includes("注記")) continue;
+          if (String(item).includes("合計") || String(item).includes("注記") || String(item).includes("TOTAL")) continue;
+          const unitCost = !isNaN(ucRaw) ? ucRaw : (!isNaN(amtRaw) && mm > 0 ? Math.round(amtRaw / mm) : 0);
           parsed.push({
             no: String(no ?? parsed.length + 1),
             item: String(item).trim(),
             manMonth: mm,
-            unitCost: isNaN(uc) ? 0 : uc,
+            unitCost,
           });
         }
 
