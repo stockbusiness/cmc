@@ -314,13 +314,23 @@ function SheetTable({ rows, headerIdx, kvPairs, isKV, acc }) {
   );
   const visibleCount = activeCols.filter(Boolean).length;
   if (visibleCount === 0) return null;
+  const visibleColCount = activeCols.filter(Boolean).length;
+  const isWide = visibleColCount > 6;
+  // For wide tables: use smaller font and let table scale to fit
+  const cellPad = isWide ? "5px 6px" : "7px 10px";
+  const fontSize = isWide ? 10 : 11;
   return (
     <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+      {isWide && (
+        <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 4, textAlign: "right" }}>
+          ← 横スクロール可（PDF印刷時は縮小表示されます）
+        </div>
+      )}
+      <table className="sheet-table" style={{ width: "100%", borderCollapse: "collapse", fontSize, tableLayout: isWide ? "fixed" : "auto" }}>
         <thead>
           <tr style={{ background: acc }}>
             {displayHeaders.map((h, i) => activeCols[i] && (
-              <th key={i} style={{ padding: "8px 10px", textAlign: "left", color: "#fff", fontWeight: 600, fontSize: 11, whiteSpace: "nowrap", minWidth: 60 }}>{h}</th>
+              <th key={i} style={{ padding: cellPad, textAlign: "left", color: "#fff", fontWeight: 600, fontSize, whiteSpace: isWide ? "normal" : "nowrap", minWidth: isWide ? 0 : 60, wordBreak: "break-word" }}>{h}</th>
             ))}
           </tr>
         </thead>
@@ -328,7 +338,9 @@ function SheetTable({ rows, headerIdx, kvPairs, isKV, acc }) {
           {dataRows.map((r, ri) => (
             <tr key={ri} style={{ background: ri % 2 === 0 ? "#fafafa" : "#fff", borderBottom: "1px solid #f0f0f0" }}>
               {displayHeaders.map((_, ci) => activeCols[ci] && (
-                <td key={ci} style={{ padding: "7px 10px", verticalAlign: "top", color: "#333", whiteSpace: "pre-wrap", maxWidth: 400, wordBreak: "break-word" }}>{r[ci] || ""}</td>
+                <td key={ci} style={{ padding: cellPad, verticalAlign: "top", color: "#333", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {(() => { const v = r[ci] || ""; const n = parseFloat(v); return (!isNaN(n) && String(v).match(/\.\d{8,}/) ? String(Math.round(n * 1000) / 1000) : v); })()}
+                </td>
               ))}
             </tr>
           ))}
@@ -744,25 +756,58 @@ async function generatePPTX({ sections, costRows, markup, settings, quoteInfo })
         );
       }
     } else if (section.rows && section.rows.length > 1) {
-      const header = section.rows[section.headerIdx] || [];
-      const visCols = header.map((h, i) => ({ h, i })).filter(({ h }) => h !== "");
-      if (visCols.length === 0) continue;
-      const dataRows = section.rows.slice(section.headerIdx + 1).filter(r => r.some(c => c !== ""));
+      // Collect all rows and determine visible columns
+      const allRows = section.rows;
+      const hIdx = section.headerIdx;
+      const header = allRows[hIdx] || [];
+      // Find max column count across header + data rows
+      const dataRows = allRows.slice(hIdx + 1).filter(r => r.some(c => c !== ""));
       if (dataRows.length === 0) continue;
-      const PER = 14;
-      const colW = Array(visCols.length).fill((W - M * 2) / visCols.length);
+      const maxCol = Math.max(header.length, ...dataRows.map(r => r.length));
+      // Determine which columns have any content
+      const visCols = [];
+      for (let ci = 0; ci < maxCol; ci++) {
+        const hasContent = (header[ci] && header[ci] !== "") || dataRows.some(r => r[ci] && r[ci] !== "");
+        if (hasContent) visCols.push({ h: header[ci] || "", i: ci });
+      }
+      if (visCols.length === 0) continue;
+
+      const isWideTable = visCols.length > 7;
+      const fontSize = isWideTable ? 7 : 9;
+      // For wide tables: reduce rows per slide to fit
+      const PER = isWideTable ? 10 : 14;
+      // Distribute column widths: give more to text-heavy cols, less to number cols
+      const tableW = W - M * 2;
+      const numericHeaders = ["W1","W2","W3","W4","W5","W6","W7","W8","W9","W10","W11","W12","工数","人月","小計","DEV","バッファ","配分","コスト","金額"];
+      const colW = visCols.map(({ h }) => {
+        const isNum = numericHeaders.some(k => h.includes(k)) || (!isNaN(parseFloat(h)) && h !== "");
+        return isNum ? 0.45 : null;
+      });
+      const fixedW = colW.reduce((s, w) => s + (w || 0), 0);
+      const flexCols = colW.filter(w => w === null).length;
+      const flexW = flexCols > 0 ? (tableW - fixedW) / flexCols : 0;
+      const finalColW = colW.map(w => w !== null ? w : Math.max(flexW, 0.3));
+
       for (let ci = 0; ci * PER < dataRows.length; ci++) {
         const sl = pres.addSlide();
         sl.background = { color: "FFFFFF" };
-        addHeader(sl, slideTitle + (dataRows.length > PER ? ` (${ci + 1}/${Math.ceil(dataRows.length / PER)})` : ""));
+        const pageLabel = dataRows.length > PER ? ` (${ci + 1}/${Math.ceil(dataRows.length / PER)})` : "";
+        addHeader(sl, slideTitle + pageLabel);
         const chunk = dataRows.slice(ci * PER, (ci + 1) * PER);
+        // Round numeric values to avoid float precision display issues
+        const cleanCell = (val) => {
+          if (!val || val === "") return "";
+          const n = parseFloat(val);
+          if (!isNaN(n) && String(val).match(/\.\d{8,}/)) return String(Math.round(n * 1000) / 1000);
+          return String(val);
+        };
         sl.addTable([
-          visCols.map(({ h }) => ({ text: h, options: { fill: { color: acc }, color: "FFFFFF", bold: true, fontSize: 9 } })),
+          visCols.map(({ h }) => ({ text: h, options: { fill: { color: acc }, color: "FFFFFF", bold: true, fontSize, align: "center" } })),
           ...chunk.map((r, ri) => visCols.map(({ i: ci2 }) => ({
-            text: String(r[ci2] || ""),
-            options: { fill: { color: ri % 2 === 0 ? "FAFAFA" : "FFFFFF" }, fontSize: 9 }
+            text: cleanCell(r[ci2]),
+            options: { fill: { color: ri % 2 === 0 ? "F8F9FA" : "FFFFFF" }, fontSize, valign: "middle" }
           })))
-        ], { x: M, y: CONTENT_Y, w: W - M * 2, h: CONTENT_H, border: { pt: 0.5, color: "E5E7EB" }, colW });
+        ], { x: M, y: CONTENT_Y, w: tableW, h: CONTENT_H, border: { pt: 0.3, color: "E5E7EB" }, colW: finalColW });
       }
     }
   }
@@ -859,9 +904,17 @@ export default function App() {
       @media print {
         body > *:not(#print-root) { display: none !important; }
         #print-root { display: block !important; }
-        @page { margin: 8mm; }
+        @page { margin: 8mm; size: A4; }
         * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
         img { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        /* Force wide tables to scale-fit the page */
+        #print-root .sheet-table { width: 100% !important; table-layout: fixed !important; font-size: 8px !important; }
+        #print-root .sheet-table th, #print-root .sheet-table td { padding: 3px 4px !important; word-break: break-word !important; overflow-wrap: break-word !important; }
+        #print-root div[style*="overflowX"] { overflow: visible !important; }
+        /* Avoid page breaks inside table rows */
+        #print-root tr { page-break-inside: avoid; }
+        /* Section headers should stay with their tables */
+        #print-root [style*="borderLeft"] { page-break-after: avoid; }
       }
     `;
     const root = document.getElementById("quote-preview").cloneNode(true);
