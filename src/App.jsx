@@ -345,13 +345,22 @@ function QuotePreview({ sections, costRows, markup, settings, quoteInfo }) {
 
   return (
     <div id="quote-preview" style={{ background: "#fff", color: "#111", fontFamily: "'Hiragino Sans', 'Meiryo', sans-serif" }}>
-      <div style={{ background: acc, padding: "20px 36px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
+      {/* Cover header - uses background template if set */}
+      <div style={{
+        padding: "20px 36px",
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        background: settings.coverBgDataUrl ? `url(${settings.coverBgDataUrl}) center/cover no-repeat` : acc,
+        position: "relative", overflow: "hidden", minHeight: 90,
+      }}>
+        {settings.coverBgDataUrl && (
+          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.38)" }} />
+        )}
+        <div style={{ position: "relative", zIndex: 1 }}>
           {settings.logoDataUrl
             ? <img src={settings.logoDataUrl} alt="logo" style={{ height: 44, maxWidth: 160, objectFit: "contain", filter: "brightness(0) invert(1)" }} />
             : <div style={{ color: "#fff", fontWeight: 800, fontSize: 22 }}>{settings.companyName}</div>}
         </div>
-        <div style={{ textAlign: "right", color: "rgba(255,255,255,0.85)", fontSize: 11, lineHeight: 1.9 }}>
+        <div style={{ position: "relative", zIndex: 1, textAlign: "right", color: "rgba(255,255,255,0.9)", fontSize: 11, lineHeight: 1.9 }}>
           {settings.address && <div>{settings.address}</div>}
           {settings.phone && <div>TEL: {settings.phone}</div>}
           {settings.email && <div>{settings.email}</div>}
