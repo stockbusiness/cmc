@@ -345,28 +345,46 @@ function QuotePreview({ sections, costRows, markup, settings, quoteInfo }) {
 
   return (
     <div id="quote-preview" style={{ background: "#fff", color: "#111", fontFamily: "'Hiragino Sans', 'Meiryo', sans-serif" }}>
-      {/* Cover header - uses background template if set */}
-      <div style={{
-        padding: "20px 36px",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        background: settings.coverBgDataUrl ? `url(${settings.coverBgDataUrl}) center/cover no-repeat` : acc,
-        position: "relative", overflow: "hidden", minHeight: 90,
-      }}>
-        {settings.coverBgDataUrl && (
-          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.38)" }} />
-        )}
-        <div style={{ position: "relative", zIndex: 1 }}>
-          {settings.logoDataUrl
-            ? <img src={settings.logoDataUrl} alt="logo" style={{ height: 44, maxWidth: 160, objectFit: "contain", filter: "brightness(0) invert(1)" }} />
-            : <div style={{ color: "#fff", fontWeight: 800, fontSize: 22 }}>{settings.companyName}</div>}
+      {settings.coverBgDataUrl ? (
+        /* ── Zept template cover ── */
+        <div style={{ position: "relative", width: "100%", aspectRatio: "16/9", overflow: "hidden", maxHeight: 360 }}>
+          <img src={settings.coverBgDataUrl} alt="cover" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.15)" }} />
+          {/* Top-left: client name + 御中 */}
+          <div style={{ position: "absolute", top: "8%", left: "4%", color: "#fff", fontSize: "clamp(12px,2.2vw,18px)", fontWeight: 400, textShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
+            {quoteInfo.clientName}　<span style={{ marginLeft: 8 }}>御中</span>
+          </div>
+          <div style={{ position: "absolute", top: "16%", left: "4%", right: "4%", height: 1, background: "rgba(255,255,255,0.7)" }} />
+          {/* Center: title */}
+          <div style={{ position: "absolute", top: "25%", left: 0, right: 0, textAlign: "center" }}>
+            <div style={{ color: "#fff", fontSize: "clamp(13px,2vw,18px)", fontWeight: 600, textShadow: "0 1px 4px rgba(0,0,0,0.5)", marginBottom: 6 }}>{quoteInfo.projectName}</div>
+            <div style={{ color: "#fff", fontSize: "clamp(24px,5vw,52px)", fontWeight: 800, letterSpacing: "0.1em", textShadow: "0 2px 8px rgba(0,0,0,0.5)" }}>御見積書</div>
+          </div>
+          {/* Bottom rule */}
+          <div style={{ position: "absolute", bottom: "22%", left: "22%", right: "4%", height: 1.5, background: "rgba(255,255,255,0.7)" }} />
+          {/* Bottom-right: date + Proposed by */}
+          <div style={{ position: "absolute", bottom: "4%", right: "4%", textAlign: "right", color: "#fff", fontSize: "clamp(10px,1.4vw,13px)", lineHeight: 1.8, textShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
+            <div>{quoteInfo.date}</div>
+            <div>Proposed by</div>
+            <div style={{ fontWeight: 600 }}>{settings.companyName}</div>
+          </div>
         </div>
-        <div style={{ position: "relative", zIndex: 1, textAlign: "right", color: "rgba(255,255,255,0.9)", fontSize: 11, lineHeight: 1.9 }}>
-          {settings.address && <div>{settings.address}</div>}
-          {settings.phone && <div>TEL: {settings.phone}</div>}
-          {settings.email && <div>{settings.email}</div>}
-          {settings.website && <div>{settings.website}</div>}
+      ) : (
+        /* ── Default header ── */
+        <div style={{ background: acc, padding: "20px 36px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            {settings.logoDataUrl
+              ? <img src={settings.logoDataUrl} alt="logo" style={{ height: 44, maxWidth: 160, objectFit: "contain", filter: "brightness(0) invert(1)" }} />
+              : <div style={{ color: "#fff", fontWeight: 800, fontSize: 22 }}>{settings.companyName}</div>}
+          </div>
+          <div style={{ textAlign: "right", color: "rgba(255,255,255,0.9)", fontSize: 11, lineHeight: 1.9 }}>
+            {settings.address && <div>{settings.address}</div>}
+            {settings.phone && <div>TEL: {settings.phone}</div>}
+            {settings.email && <div>{settings.email}</div>}
+            {settings.website && <div>{settings.website}</div>}
+          </div>
         </div>
-      </div>
+      )}
       <div style={{ padding: "28px 36px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
           <div>
@@ -578,15 +596,38 @@ async function generatePPTX({ sections, costRows, markup, settings, quoteInfo })
     }
   }
 
-  cover.addText("御　見　積　書", { x: M, y: 1.3, w: W - M * 2, h: 1.3, fontSize: 44, bold: true, color: "FFFFFF", align: "center", charSpacing: 10, valign: "middle" });
-  cover.addText(quoteInfo.projectName, { x: M, y: 2.7, w: W - M * 2, h: 0.55, fontSize: 15, color: "FFFFFF", align: "center" });
-  cover.addText(`${quoteInfo.clientName}　御中`, { x: M, y: 3.3, w: W - M * 2, h: 0.5, fontSize: 13, color: "FFFFFF", align: "center" });
+  if (settings.coverBgDataUrl) {
+    // ── Zept template layout (matches existing PPTX design) ──────
+    // Top-left: client name + 御中
+    cover.addText(quoteInfo.clientName, { x: 0.35, y: 0.08, w: 5.5, h: 0.45, fontSize: 16, color: "FFFFFF", bold: false });
+    cover.addText("御中", { x: 3.2, y: 0.08, w: 2, h: 0.45, fontSize: 16, color: "FFFFFF" });
+    // Horizontal rule below client name (white line)
+    cover.addShape(pres.shapes.LINE, { x: 0.35, y: 0.52, w: 5.5, h: 0, line: { color: "FFFFFF", width: 1.5 } });
 
-  cover.addText([
-    { text: `見積番号：${quoteInfo.quoteNo}`, options: { breakLine: true } },
-    { text: `発行日：${quoteInfo.date}`, options: { breakLine: true } },
-    { text: `有効期限：${quoteInfo.expiry}` }
-  ], { x: M, y: H - 1.3, w: W - M * 2, h: 1.1, fontSize: 11, color: "DDDDDD", align: "center" });
+    // Center: project name + title + 御見積書
+    cover.addText(quoteInfo.projectName, { x: M, y: 1.3, w: W - M * 2, h: 0.55, fontSize: 20, bold: true, color: "FFFFFF", align: "center" });
+    cover.addText("御見積書", { x: M, y: 1.95, w: W - M * 2, h: 1.0, fontSize: 48, bold: true, color: "FFFFFF", align: "center", charSpacing: 6 });
+
+    // Bottom horizontal rule
+    cover.addShape(pres.shapes.LINE, { x: 2.2, y: H - 1.15, w: 5.8, h: 0, line: { color: "FFFFFF", width: 1.5 } });
+
+    // Bottom-right: date + Proposed by / company
+    cover.addText([
+      { text: quoteInfo.date, options: { breakLine: true } },
+      { text: "Proposed by", options: { breakLine: true } },
+      { text: settings.companyName }
+    ], { x: 6.5, y: H - 1.05, w: 3.1, h: 0.95, fontSize: 12, color: "FFFFFF", align: "right" });
+  } else {
+    // ── Default layout ────────────────────────────────────────────
+    cover.addText("御　見　積　書", { x: M, y: 1.3, w: W - M * 2, h: 1.3, fontSize: 44, bold: true, color: "FFFFFF", align: "center", charSpacing: 10, valign: "middle" });
+    cover.addText(quoteInfo.projectName, { x: M, y: 2.7, w: W - M * 2, h: 0.55, fontSize: 15, color: "FFFFFF", align: "center" });
+    cover.addText(`${quoteInfo.clientName}　御中`, { x: M, y: 3.3, w: W - M * 2, h: 0.5, fontSize: 13, color: "FFFFFF", align: "center" });
+    cover.addText([
+      { text: `見積番号：${quoteInfo.quoteNo}`, options: { breakLine: true } },
+      { text: `発行日：${quoteInfo.date}`, options: { breakLine: true } },
+      { text: `有効期限：${quoteInfo.expiry}` }
+    ], { x: M, y: H - 1.3, w: W - M * 2, h: 1.1, fontSize: 11, color: "DDDDDD", align: "center" });
+  }
 
   // ── Slide 2: Cost ───────────────────────────────────────────────
   const total = costRows.reduce((s, r) => s + r.manMonth * r.unitCost * markup, 0);
