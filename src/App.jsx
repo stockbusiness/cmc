@@ -51,6 +51,62 @@ const KV_AUTO_MAP = {
 };
 
 // ─── Excel parser ──────────────────────────────────────────────────
+
+// Normalize a raw sheet: remove empty rows, trim cells, strip leading all-NaN columns
+function normalizeSheet(raw) {
+  // Convert all cells to strings
+  let rows = raw.map((r) => r.map((c) => (c !== null && c !== undefined && String(c).trim() !== "") ? String(c).trim() : ""));
+  // Remove fully empty rows
+  rows = rows.filter((r) => r.some((c) => c !== ""));
+  if (rows.length === 0) return rows;
+  // Strip leading columns that are empty in ALL rows (e.g. Excel spacer column)
+  let startCol = 0;
+  const maxCols = Math.max(...rows.map((r) => r.length));
+  for (let ci = 0; ci < maxCols; ci++) {
+    if (rows.every((r) => !r[ci] || r[ci] === "")) startCol = ci + 1;
+    else break;
+  }
+  if (startCol > 0) rows = rows.map((r) => r.slice(startCol));
+  return rows;
+}
+
+// Find the best header row: the first row that looks like column headers
+// (short cells, many non-empty cells, followed by data rows)
+function findHeaderIdx(rows) {
+  let bestScore = -1, bestIdx = 0;
+  for (let i = 0; i < Math.min(rows.length - 1, 10); i++) {
+    const r = rows[i];
+    const filled = r.filter((c) => c !== "").length;
+    // Headers tend to be short strings
+    const avgLen = r.filter((c) => c !== "").reduce((s, c) => s + c.length, 0) / Math.max(filled, 1);
+    // Prefer rows with multiple filled cells and short text
+    const score = filled * 2 - avgLen * 0.1;
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+// Build clean KV pairs for 2-column sheets (key | value layout)
+function extractKVPairs(rows) {
+  const pairs = [];
+  for (const row of rows) {
+    const filled = row.filter((c) => c !== "");
+    if (filled.length === 0) continue;
+    const key = row[0] || row.find((c) => c !== "") || "";
+    // Skip long values as keys (these are section sub-headers or data cells)
+    if (!key || key.length > 60) continue;
+    // Value = second non-empty cell
+    let val = "";
+    let foundKey = false;
+    for (const c of row) {
+      if (!foundKey && c === key) { foundKey = true; continue; }
+      if (foundKey && c !== "") { val = c; break; }
+    }
+    pairs.push({ key, value: val });
+  }
+  return pairs;
+}
+
 function parseAllSheets(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -62,48 +118,49 @@ function parseAllSheets(file) {
         for (const sheetName of wb.SheetNames) {
           const ws = wb.Sheets[sheetName];
           const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-          const nonEmpty = raw.filter((r) => r.some((c) => c !== null && c !== undefined && String(c).trim() !== ""));
-          if (nonEmpty.length < 2) continue;
-
-          const rows = nonEmpty.map((r) => r.map((c) => c !== null && c !== undefined ? String(c).trim() : ""));
-          let headerIdx = 0, maxFilled = 0;
-          for (let i = 0; i < Math.min(rows.length, 12); i++) {
-            const filled = rows[i].filter((c) => c !== "").length;
-            if (filled > maxFilled) { maxFilled = filled; headerIdx = i; }
-          }
+          const rows = normalizeSheet(raw);
+          if (rows.length < 2) continue;
 
           const type = classifySheet(sheetName);
+          const headerIdx = findHeaderIdx(rows);
 
-          // Detect KV layout: rows where col[0] or col[1] is a label and col[1] or col[2] is a value
-          const kvPairs = extractKVPairs(rows);
-          const isKV = kvPairs.length >= 2;
+          // Determine if this is a KV sheet:
+          // - 2-3 content columns after stripping spacers
+          // - Most rows have a short key in col 0 and value in col 1+
+          const maxCols = Math.max(...rows.map((r) => r.length));
+          const isKV = maxCols <= 4 && rows.filter((r) => r[0] && r[0] !== "").length >= 2;
+          const kvPairs = isKV ? extractKVPairs(rows) : [];
 
           sections.push({ id: sheetName, name: sheetName, type, rows, headerIdx, enabled: type !== "other", isKV, kvPairs });
         }
 
-        // Extract cost rows
+        // Extract cost rows from cost/全体工数 sheet
         let costRows = [];
         const costSection = sections.find((s) => s.type === "cost");
         if (costSection) {
           const { rows, headerIdx } = costSection;
-          const header = rows[headerIdx];
-          const mmI = header.findIndex((c) => c.includes("工数") || c.includes("人月") || c.includes("MM"));
-          const costI = header.findIndex((c) => (c.includes("コスト") || c.includes("単価")) && !c.includes("合計"));
-          const amtI = header.findIndex((c) => c.includes("金額") || c.includes("コスト") || c.includes("amount"));
-          const itemI = header.findIndex((c) => c.includes("項目") || c.includes("役割") || c.includes("タスク") || c.includes("item") || c.includes("Category"));
-          const noI = header.findIndex((c) => c === "No" || c === "NO" || c === "#");
-          if (mmI !== -1 && (itemI !== -1 || noI !== -1)) {
-            for (let i = headerIdx + 1; i < rows.length; i++) {
+          // Try each plausible header row
+          for (let hi = 0; hi <= Math.min(headerIdx + 2, rows.length - 2); hi++) {
+            const header = rows[hi];
+            const mmI = header.findIndex((c) => c.includes("工数") || c.includes("人月") || c === "MM");
+            const costI = header.findIndex((c) => (c.includes("コスト") || c.includes("単価")) && !c.includes("合計"));
+            const amtI = header.findIndex((c) => c.includes("金額") || c.includes("コスト") || c.includes("amount"));
+            const itemI = header.findIndex((c) => c.includes("項目") || c.includes("役割") || c.includes("タスク") || c.includes("item") || c.includes("Category"));
+            const noI = header.findIndex((c) => c === "No" || c === "NO" || c === "#");
+            if (mmI === -1 || (itemI === -1 && noI === -1)) continue;
+            const parsed = [];
+            for (let i = hi + 1; i < rows.length; i++) {
               const r = rows[i];
               const item = r[itemI >= 0 ? itemI : noI + 1];
               const mm = parseFloat(r[mmI]);
               if (!item || isNaN(mm) || mm <= 0) continue;
-              if (item.includes("合計") || item.includes("注記") || item.includes("TOTAL")) continue;
+              if (["合計","注記","TOTAL","Calculate"].some(k => item.includes(k))) continue;
               const ucRaw = parseFloat(r[costI >= 0 ? costI : mmI + 1]);
               const amtRaw = parseFloat(r[amtI >= 0 ? amtI : mmI + 2]);
               const unitCost = !isNaN(ucRaw) ? ucRaw : (!isNaN(amtRaw) && mm > 0 ? Math.round(amtRaw / mm) : 0);
-              costRows.push({ no: String(r[noI >= 0 ? noI : 0] ?? costRows.length + 1), item: item.trim(), manMonth: mm, unitCost });
+              parsed.push({ no: String(r[noI >= 0 ? noI : 0] ?? parsed.length + 1), item: item.trim(), manMonth: mm, unitCost });
             }
+            if (parsed.length > 0) { costRows = parsed; break; }
           }
         }
         if (costRows.length === 0) costRows = [
@@ -121,28 +178,6 @@ function parseAllSheets(file) {
     reader.onerror = () => reject(new Error("読み込みエラー"));
     reader.readAsArrayBuffer(file);
   });
-}
-
-// Detect key-value pairs from any sheet layout
-function extractKVPairs(rows) {
-  const pairs = [];
-  for (const row of rows) {
-    const nonEmpty = row.filter((c) => c !== "");
-    if (nonEmpty.length === 0) continue;
-    // Find the first non-empty cell as key, next non-empty as value
-    let keyIdx = row.findIndex((c) => c !== "");
-    if (keyIdx === -1) continue;
-    const key = row[keyIdx];
-    // Look for value in same row (next non-empty cell)
-    let val = "";
-    for (let i = keyIdx + 1; i < row.length; i++) {
-      if (row[i] !== "") { val = row[i]; break; }
-    }
-    // Skip rows that look like section headers (very long values, no real key)
-    if (key.length > 40) continue;
-    pairs.push({ key, value: val });
-  }
-  return pairs;
 }
 
 // ─── Inline KV Editor ─────────────────────────────────────────────
@@ -269,23 +304,31 @@ function SheetTable({ rows, headerIdx, kvPairs, isKV, acc }) {
   if (!rows || rows.length === 0) return null;
   const header = rows[headerIdx] || [];
   const dataRows = rows.slice(headerIdx + 1).filter((r) => r.some((c) => c !== ""));
-  const colCount = header.filter((h) => h !== "").length;
-  if (colCount === 0) return null;
+  // Find actual column count: max of header cols and data cols
+  const maxCols = Math.max(header.length, ...dataRows.map((r) => r.length));
+  // Build display headers: use header values or empty string for extra cols
+  const displayHeaders = Array.from({ length: maxCols }, (_, i) => header[i] || "");
+  // Only render columns that have at least one non-empty value
+  const activeCols = displayHeaders.map((_, ci) =>
+    displayHeaders[ci] !== "" || dataRows.some((r) => r[ci] && r[ci] !== "")
+  );
+  const visibleCount = activeCols.filter(Boolean).length;
+  if (visibleCount === 0) return null;
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
         <thead>
           <tr style={{ background: acc }}>
-            {header.filter((h) => h !== "").map((h, i) => (
-              <th key={i} style={{ padding: "8px 10px", textAlign: "left", color: "#fff", fontWeight: 600, fontSize: 11, whiteSpace: "nowrap" }}>{h}</th>
+            {displayHeaders.map((h, i) => activeCols[i] && (
+              <th key={i} style={{ padding: "8px 10px", textAlign: "left", color: "#fff", fontWeight: 600, fontSize: 11, whiteSpace: "nowrap", minWidth: 60 }}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {dataRows.map((r, i) => (
-            <tr key={i} style={{ background: i % 2 === 0 ? "#fafafa" : "#fff", borderBottom: "1px solid #f0f0f0" }}>
-              {r.slice(0, header.filter((h) => h !== "").length).map((cell, ci) => (
-                <td key={ci} style={{ padding: "7px 10px", verticalAlign: "top", color: "#333", whiteSpace: "pre-wrap", maxWidth: 320 }}>{cell}</td>
+          {dataRows.map((r, ri) => (
+            <tr key={ri} style={{ background: ri % 2 === 0 ? "#fafafa" : "#fff", borderBottom: "1px solid #f0f0f0" }}>
+              {displayHeaders.map((_, ci) => activeCols[ci] && (
+                <td key={ci} style={{ padding: "7px 10px", verticalAlign: "top", color: "#333", whiteSpace: "pre-wrap", maxWidth: 400, wordBreak: "break-word" }}>{r[ci] || ""}</td>
               ))}
             </tr>
           ))}
