@@ -345,10 +345,18 @@ function QuotePreview({ sections, costRows, markup, settings, quoteInfo }) {
 
   return (
     <div id="quote-preview" style={{ background: "#fff", color: "#111", fontFamily: "'Hiragino Sans', 'Meiryo', sans-serif" }}>
+      <style>{`
+        @media print {
+          #quote-preview img { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          #quote-preview * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          #print-root img { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          #print-root * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        }
+      `}</style>
       {settings.coverBgDataUrl ? (
         /* ── Zept template cover ── */
-        <div style={{ position: "relative", width: "100%", aspectRatio: "16/9", overflow: "hidden", maxHeight: 360 }}>
-          <img src={settings.coverBgDataUrl} alt="cover" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <div style={{ position: "relative", width: "100%", aspectRatio: "16/9", overflow: "hidden", maxHeight: 360, printColorAdjust: "exact", WebkitPrintColorAdjust: "exact" }}>
+          <img src={settings.coverBgDataUrl} alt="cover" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", printColorAdjust: "exact", WebkitPrintColorAdjust: "exact" }} />
           <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.15)" }} />
           {/* Top-left: client name + 御中 */}
           <div style={{ position: "absolute", top: "8%", left: "4%", color: "#fff", fontSize: "clamp(12px,2.2vw,18px)", fontWeight: 400, textShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
@@ -804,10 +812,22 @@ export default function App() {
 
   const handlePrint = () => {
     const style = document.createElement("style");
-    style.textContent = `@media print { body > *:not(#print-root) { display: none !important; } #print-root { display: block !important; } @page { margin: 12mm; } }`;
+    style.textContent = `
+      @media print {
+        body > *:not(#print-root) { display: none !important; }
+        #print-root { display: block !important; }
+        @page { margin: 8mm; }
+        * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+        img { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      }
+    `;
     const root = document.getElementById("quote-preview").cloneNode(true);
-    root.id = "print-root"; document.body.appendChild(style); document.body.appendChild(root);
-    window.print(); document.body.removeChild(style); document.body.removeChild(root);
+    root.id = "print-root";
+    document.body.appendChild(style);
+    document.body.appendChild(root);
+    window.print();
+    document.body.removeChild(style);
+    document.body.removeChild(root);
   };
 
   return (
@@ -973,13 +993,19 @@ export default function App() {
         {/* ── PREVIEW ── */}
         {tab === "preview" && (
           <div>
-            <div style={{ display: "flex", gap: 10, marginBottom: 16, justifyContent: "flex-end" }}>
+            <div style={{ display: "flex", gap: 10, marginBottom: settings.coverBgDataUrl ? 6 : 16, justifyContent: "flex-end", flexWrap: "wrap" }}>
               <button onClick={() => setTab("sections")} style={{ background: "#1a1d2e", border: "1px solid #3a3d50", color: "#9ca3af", borderRadius: 8, padding: "8px 18px", fontSize: 13, cursor: "pointer" }}>← 編集に戻る</button>
               <button onClick={handlePrint} style={{ background: `linear-gradient(135deg, ${acc}, ${acc}cc)`, border: "none", color: "#fff", borderRadius: 8, padding: "8px 22px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>🖨️ PDF / 印刷</button>
               <button onClick={handlePPTX} disabled={pptxGenerating} style={{ background: pptxGenerating ? "#2a2d3e" : "linear-gradient(135deg, #D04423, #C0392B)", border: "none", color: "#fff", borderRadius: 8, padding: "8px 22px", fontSize: 13, fontWeight: 700, cursor: pptxGenerating ? "wait" : "pointer", opacity: pptxGenerating ? 0.7 : 1 }}>
                 {pptxGenerating ? "⏳ 生成中..." : "📊 PowerPoint出力"}
               </button>
             </div>
+            {settings.coverBgDataUrl && (
+              <div style={{ marginBottom: 14, background: "#1a2a1a", border: "1px solid #2a4a2a", borderRadius: 8, padding: "9px 14px", fontSize: 12, color: "#86efac", display: "flex", alignItems: "center", gap: 8 }}>
+                <span>💡</span>
+                <span>PDF印刷時は印刷ダイアログで <strong>「背景のグラフィック」をON</strong>（Chromeは「詳細設定」内）にすると背景画像が印刷されます。背景なしで出力したい場合は <strong>PowerPoint出力</strong> を推奨。</span>
+              </div>
+            )}
             <QuotePreview sections={sections.length > 0 ? sections : [{ id: "cost", name: "見積コスト", type: "cost", enabled: true, rows: [], headerIdx: 0, isKV: false, kvPairs: [] }]}
               costRows={costRows} markup={markup} settings={settings} quoteInfo={quoteInfo} />
           </div>
